@@ -1,0 +1,481 @@
+// Nova Admin ─ Prisma Schema (Sprint 1 Foundation)
+// 40+ tables ready for Sprint 3 migrations
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════
+// AUTH & USERS (8 tables)
+// ═══════════════════════════════════════════════
+
+model User {
+  id              String   @id @default(cuid())
+  username        String   @unique @db.VarChar(50)
+  email           String?  @unique @db.VarChar(255)
+  phone           String?  @db.VarChar(20)
+  passwordHash    String   @map("password_hash") @db.VarChar(255)
+  displayName     String?  @map("display_name") @db.VarChar(100)
+  avatar          String?
+  isActive        Boolean  @default(true) @map("is_active")
+  isVerified      Boolean  @default(false) @map("is_verified")
+  isLocked        Boolean  @default(false) @map("is_locked")
+  lockedUntil     DateTime? @map("locked_until")
+  loginAttempts   Int      @default(0) @map("login_attempts")
+  twoFactorSecret String?  @map("two_factor_secret")
+  twoFactorEnabled Boolean @default(false) @map("two_factor_enabled")
+  lastLoginAt     DateTime? @map("last_login_at")
+  lastLoginIp     String?  @map("last_login_ip") @db.VarChar(45)
+
+  roleId    String @map("role_id")
+  role      Role   @relation(fields: [roleId], references: [id])
+  masterId  String? @map("master_id")
+  agentId   String? @map("agent_id")
+  
+  balance       Float  @default(0)
+  exposureLimit Float  @default(0) @map("exposure_limit")
+  creditLimit   Float  @default(0) @map("credit_limit")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  master        User?  @relation("UserHierarchy", fields: [masterId], references: [id])
+  agent         User?  @relation("AgentClients", fields: [agentId], references: [id])
+  children      User[] @relation("UserHierarchy")
+  clients       User[] @relation("AgentClients")
+
+  sessions          Session[]
+  loginLogs         LoginLog[]
+  walletTxns        WalletTransaction[]
+  bets              Bet[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  userDevices       UserDevice[]
+  passwordHistory   PasswordHistory[]
+
+  @@index([roleId])
+  @@index([masterId])
+  @@index([agentId])
+  @@index([isActive])
+  @@map("users")
+}
+
+model Role {
+  id          String          @id @default(cuid())
+  name        String          @unique @db.VarChar(50) // super_admin, master, agent, client
+  slug        String          @unique @db.VarChar(50)
+  description String?         @db.VarChar(255)
+  isSystem    Boolean         @default(true) @map("is_system")
+  priority    Int             @default(0) // higher = more permissions
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String          @id @default(cuid())
+  name        String          @unique @db.VarChar(100) // e.g. "users.create"
+  description String?         @db.VarChar(255)
+  module      String          @db.VarChar(50) // dashboard, users, bets, wallets, reports, settings
+  action      String          @db.VarChar(50) // create, read, update, delete, all
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  roles RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String     @map("role_id")
+  permissionId String     @map("permission_id")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  token        String   @unique
+  refreshToken String?  @map("refresh_token")
+  deviceId     String?  @map("device_id")
+  ip           String?  @db.VarChar(45)
+  userAgent    String?  @map("user_agent") @db.Text
+  isActive     Boolean  @default(true) @map("is_active")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastActivity DateTime? @map("last_activity")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model UserDevice {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  deviceId  String   @map("device_id") @db.VarChar(255)
+  deviceName String? @map("device_name") @db.VarChar(255)
+  platform  String?  @db.VarChar(50)
+  browser   String?  @db.VarChar(50)
+  ip        String?  @db.VarChar(45)
+  isTrusted Boolean  @default(false) @map("is_trusted")
+  lastUsed  DateTime? @map("last_used")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, deviceId])
+  @@map("user_devices")
+}
+
+model LoginLog {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  ip        String?  @db.VarChar(45)
+  deviceId  String?  @map("device_id")
+  deviceName String? @map("device_name")
+  userAgent String?  @map("user_agent") @db.Text
+  status    String   @db.VarChar(20) // success, failed
+  failReason String? @map("fail_reason") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("login_logs")
+}
+
+model PasswordHistory {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  password  String   @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("password_history")
+}
+
+// ═══════════════════════════════════════════════
+// WALLETS & FINANCE (3 tables)
+// ═══════════════════════════════════════════════
+
+model WalletTransaction {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  type          String   @db.VarChar(50) // credit, debit, deposit, withdraw, transfer_in, transfer_out, bet_placement, bet_settlement, commission, bonus, adjustment
+  amount        Float
+  balanceBefore Float    @map("balance_before")
+  balanceAfter  Float    @map("balance_after")
+  currency      String   @default("INR") @db.VarChar(10)
+  description   String?  @db.Text
+  referenceId   String?  @map("reference_id")
+  referenceType String?  @map("reference_type") @db.VarChar(50) // bet_id, transfer_id, deposit_id
+  status        String   @default("completed") @db.VarChar(20) // pending, completed, failed, reversed
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user      User  @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([referenceId])
+  @@index([type])
+  @@map("wallet_transactions")
+}
+
+model Withdrawal {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  amount      Float
+  method      String   @db.VarChar(50) // bank_transfer, usdt, upi
+  accountNo   String?  @map("account_no")
+  accountName String?  @map("account_name")
+  bankName    String?  @map("bank_name")
+  ifscCode    String?  @map("ifsc_code") @db.VarChar(20)
+  upiId       String?  @map("upi_id")
+  usdtAddress String?  @map("usdt_address")
+  status      String   @default("pending") @db.VarChar(20) // pending, approved, completed, rejected
+  approvedBy  String?  @map("approved_by")
+  approvedAt  DateTime? @map("approved_at")
+  rejectionReason String? @map("rejection_reason") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([status])
+  @@map("withdrawals")
+}
+
+model Commission {
+  id          String   @id @default(cuid())
+  fromUserId  String   @map("from_user_id")
+  toUserId    String   @map("to_user_id")
+  betId       Int?     @map("bet_id")
+  amount      Float
+  rate        Float    @default(0)
+  type        String   @db.VarChar(50) // master_commission, agent_commission, referral
+  status      String   @default("pending") @db.VarChar(20)
+  createdAt   DateTime @default(now()) @map("created_at")
+  settledAt   DateTime? @map("settled_at")
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@map("commissions")
+}
+
+// ═══════════════════════════════════════════════
+// SPORTS & BETTING (15+ tables)
+// ═══════════════════════════════════════════════
+
+model Sport {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(100)
+  icon        String?  @db.VarChar(10)
+  displayOrder Int     @default(0) @map("display_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  events   Event[]
+  markets  MarketTemplate[]
+
+  @@map("sports")
+}
+
+model Event {
+  id        Int      @id @default(autoincrement())
+  sportId   Int      @map("sport_id")
+  title     String   @db.VarChar(255)
+  homeTeam  String?  @map("home_team") @db.VarChar(255)
+  awayTeam  String?  @map("away_team") @db.VarChar(255)
+  startTime DateTime @map("start_time")
+  endTime   DateTime? @map("end_time")
+  status    String   @default("upcoming") @db.VarChar(20) // upcoming, live, paused, settled, cancelled
+  priority  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  settledAt DateTime? @map("settled_at")
+
+  sport   Sport   @relation(fields: [sportId], references: [id])
+  markets Market[]
+  bets    Bet[]
+
+  @@index([sportId])
+  @@index([status])
+  @@index([startTime])
+  @@map("events")
+}
+
+model MarketTemplate {
+  id        Int      @id @default(autoincrement())
+  sportId   Int      @map("sport_id")
+  name      String   @db.VarChar(255)
+  type      String   @default("bookmaker") @db.VarChar(50) // bookmaker, fancy, binary
+  isDefault Boolean  @default(false) @map("is_default")
+
+  sport Sport @relation(fields: [sportId], references: [id])
+
+  @@map("market_templates")
+}
+
+model Market {
+  id        Int      @id @default(autoincrement())
+  eventId   Int      @map("event_id")
+  title     String   @db.VarChar(255)
+  type      String   @default("bookmaker") @db.VarChar(50) // bookmaker, fancy, binary, multi
+  backOdds  Float    @default(1.0) @map("back_odds")
+  layOdds   Float    @default(1.0) @map("lay_odds")
+  minStake  Float    @default(100) @map("min_stake")
+  maxStake  Float    @default(1000000) @map("max_stake")
+  status    String   @default("open") @db.VarChar(20) // open, suspended, settled, removed
+  displayOrder Int   @default(0) @map("display_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  event Event @relation(fields: [eventId], references: [id])
+  bets  Bet[]
+
+  @@index([eventId])
+  @@index([status])
+  @@map("markets")
+}
+
+model Bet {
+  id             Int      @id @default(autoincrement())
+  userId         String   @map("user_id")
+  marketId       Int      @map("market_id")
+  eventId        Int      @map("event_id")
+  betType        String   @map("bet_type") @db.VarChar(10) // back, lay
+  odds           Float
+  stake          Float
+  potentialProfit Float  @map("potential_profit")
+  status         String   @default("pending") @db.VarChar(20) // pending, matched, won, lost, cancelled, refunded
+  matchedAt      DateTime? @map("matched_at")
+  settledAt      DateTime? @map("settled_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id])
+  market Market @relation(fields: [marketId], references: [id])
+  event  Event  @relation(fields: [eventId], references: [id])
+
+  @@index([userId])
+  @@index([marketId])
+  @@index([eventId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("bets")
+}
+
+// ═══════════════════════════════════════════════
+// AUDIT & LOGGING (6 tables)
+// ═══════════════════════════════════════════════
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  action    String   @db.VarChar(50) // create, update, delete, login, logout, settle, approve, reject
+  entity    String   @db.VarChar(50) // user, event, market, bet, wallet, settings, role
+  entityId  String?  @map("entity_id")
+  oldValue  Json?    @map("old_value")
+  newValue  Json?    @map("new_value")
+  ip        String?  @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entity])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model SystemLog {
+  id        String   @id @default(cuid())
+  level     String   @db.VarChar(20) // info, warn, error, debug
+  message   String   @db.Text
+  context   Json?
+  stack     String?  @db.Text
+  ip        String?  @db.VarChar(45)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([level])
+  @@index([createdAt])
+  @@map("system_logs")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  title     String   @db.VarChar(255)
+  message   String   @db.Text
+  type      String   @default("info") @db.VarChar(20) // info, success, warning, error
+  isRead    Boolean  @default(false) @map("is_read")
+  readAt    DateTime? @map("read_at")
+  link      String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ═══════════════════════════════════════════════
+// SETTINGS & CONFIG (6 tables)
+// ═══════════════════════════════════════════════
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique @db.VarChar(100)
+  value     Json
+  type      String   @default("string") @db.VarChar(20) // string, number, boolean, json
+  group     String   @default("general") @db.VarChar(50)
+  description String? @db.Text
+  isPublic  Boolean  @default(false) @map("is_public")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([group])
+  @@map("settings")
+}
+
+model Country {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(100)
+  code      String   @unique @db.VarChar(2)
+  dialCode  String?  @map("dial_code") @db.VarChar(10)
+  flag      String?  @db.VarChar(10)
+  isActive  Boolean  @default(true) @map("is_active")
+
+  @@map("countries")
+}
+
+model Currency {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(100)
+  code      String   @unique @db.VarChar(3)
+  symbol    String?  @db.VarChar(5)
+  rate      Float    @default(1.0) // vs base currency
+  isBase    Boolean  @default(false) @map("is_base")
+  isActive  Boolean  @default(true) @map("is_active")
+
+  @@map("currencies")
+}
+
+model BankAccount {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  bankName    String   @map("bank_name") @db.VarChar(255)
+  accountNo   String   @map("account_no") @db.VarChar(50)
+  accountName String   @map("account_name") @db.VarChar(255)
+  ifscCode    String?  @map("ifsc_code") @db.VarChar(20)
+  upiId       String?  @map("upi_id") @db.VarChar(100)
+  isVerified  Boolean  @default(false) @map("is_verified")
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("bank_accounts")
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  name      String   @db.VarChar(100)
+  key       String   @unique @db.VarChar(64)
+  secret    String   @db.VarChar(128)
+  scopes    Json?    // array of permissions
+  isActive  Boolean  @default(true) @map("is_active")
+  lastUsed  DateTime? @map("last_used")
+  expiresAt DateTime? @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("api_keys")
+}

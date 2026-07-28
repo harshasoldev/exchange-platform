@@ -1,0 +1,29 @@
+{
+  "name": "nova-admin",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "backend:dev": "npm run start:dev -w packages/backend",
+    "frontend:dev": "npm run dev -w packages/frontend",
+    "db:generate": "npm run prisma:generate -w packages/database",
+    "db:push": "npm run prisma:push -w packages/database",
+    "db:migrate": "npm run prisma:migrate -w packages/database",
+    "db:seed": "npm run prisma:seed -w packages/database",
+    "db:studio": "npm run prisma:studio -w packages/database",
+    "build": "npm run build -w packages/shared && npm run build -w packages/backend",
+    "lint": "npm run lint -w packages/backend && npm run lint -w packages/frontend",
+    "test": "npm run test -w packages/backend",
+    "docker:up": "docker compose -f docker-compose.yml up -d",
+    "docker:down": "docker compose -f docker-compose.yml down",
+    "docker:build": "docker compose -f docker-compose.yml build",
+    "docker:logs": "docker compose -f docker-compose.yml logs -f",
+    "setup": "npm install && npm run db:generate && npm run db:push && npm run db:seed",
+    "health": "node scripts/health-check.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
